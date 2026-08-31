@@ -6,11 +6,11 @@ on:
       configuration:
         description: 'Выберите конфигурацию сборки'
         required: true
-        default: 'Debug'
+        default: 'Release'
         type: choice
         options:
-          - Debug
           - Release
+          - Debug
 
 jobs:
   build:
@@ -35,9 +35,9 @@ jobs:
         shell: pwsh
         run: ./build.ps1 -Configuration ${{ inputs.configuration }}
 
-      - name: Upload executable
+      - name: Upload executable and dependencies
         uses: actions/upload-artifact@v6
         with:
           name: WandEnhancer-${{ inputs.configuration }}
-          path: WandEnhancer/bin/${{ inputs.configuration }}/WandEnhancer.exe
+          path: WandEnhancer/bin/${{ inputs.configuration }}/*
           if-no-files-found: error
