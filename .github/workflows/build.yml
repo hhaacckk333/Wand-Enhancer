@@ -1,13 +1,7 @@
-name: Build executable
+name: Build executable (Dev 2.0)
 
 on:
   workflow_dispatch:
-    inputs:
-      version_tag:
-        description: 'Тег версии для сборки'
-        required: true
-        default: '2.0.0.0-rc.1'
-        type: string
 
 jobs:
   build:
@@ -16,11 +10,12 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout source code
+      # Забираем настоящую dev-ветку 2.0 (feature/rc_v_2.0.0.0)
+      - name: Checkout Dev 2.0 Branch
         uses: actions/checkout@v5
         with:
           repository: 'k1tbyte/Wand-Enhancer'
-          ref: ${{ inputs.version_tag }}
+          ref: 'feature/rc_v_2.0.0.0'
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v5
@@ -33,13 +28,14 @@ jobs:
           cache: pnpm
           cache-dependency-path: web-panel/pnpm-lock.yaml
 
-      - name: Build single-file executable
+      # Собираем монолитный .exe со встроенной веб-панелью 2.0
+      - name: Build unsigned executable
         shell: pwsh
         run: ./build.ps1 -Configuration Release
 
       - name: Upload executable
         uses: actions/upload-artifact@v6
         with:
-          name: WandEnhancer-${{ inputs.version_tag }}
+          name: WandEnhancer-v2.0-dev
           path: WandEnhancer/bin/Release/WandEnhancer.exe
           if-no-files-found: error
