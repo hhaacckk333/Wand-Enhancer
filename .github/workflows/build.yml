@@ -1,7 +1,23 @@
-name: Build executable (Dev 2.0)
+name: Build Wand-Enhancer (Auto-Detect)
 
 on:
   workflow_dispatch:
+    inputs:
+      version_choice:
+        description: 'Какую версию собрать автоматически?'
+        required: true
+        default: 'latest-dev'
+        type: choice
+        options:
+          - 'latest-dev (Самая свежая Dev-ветка со всеми обновлениями)'
+          - 'latest-prerelease (Новейший предрелиз / RC: например, rc.1, rc.2...)'
+          - 'latest-release (Последний официальный стабильный релиз)'
+          - 'custom (Ввести свой тег вручную)'
+      custom_tag:
+        description: 'Если выбрали custom, введите тег/ветку (иначе оставьте пустым):'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   build:
@@ -10,12 +26,38 @@ jobs:
       contents: read
 
     steps:
-      # Забираем настоящую dev-ветку 2.0 (feature/rc_v_2.0.0.0)
-      - name: Checkout Dev 2.0 Branch
+      - name: Auto-detect latest version from official repository
+        shell: pwsh
+        run: |
+          $choice = "${{ inputs.version_choice }}"
+          $custom = "${{ inputs.custom_tag }}".Trim()
+
+          if ($custom -ne "") {
+              $targetRef = $custom
+              Write-Host "==> Выбран ручной тег: $targetRef"
+          } elseif ($choice -like "latest-dev*") {
+              # Свежая ветка активной разработки 2.0
+              $targetRef = "feature/rc_v_2.0.0.0"
+              Write-Host "==> Авто-определение: Самая свежая Dev-ветка ($targetRef)"
+          } elseif ($choice -like "latest-prerelease*") {
+              # Автоматически запрашиваем самый свежий предрелиз/RC из GitHub API
+              $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/k1tbyte/Wand-Enhancer/releases"
+              $targetRef = $releases[0].tag_name
+              Write-Host "==> Авто-определение: Найден новейший предрелиз -> $targetRef"
+          } elseif ($choice -like "latest-release*") {
+              # Автоматически запрашиваем последний стабильный релиз
+              $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/k1tbyte/Wand-Enhancer/releases/latest"
+              $targetRef = $latest.tag_name
+              Write-Host "==> Авто-определение: Найден стабильный релиз -> $targetRef"
+          }
+
+          echo "RESOLVED_REF=$targetRef" >> $env:GITHUB_ENV
+
+      - name: Checkout resolved version
         uses: actions/checkout@v5
         with:
           repository: 'k1tbyte/Wand-Enhancer'
-          ref: 'feature/rc_v_2.0.0.0'
+          ref: ${{ env.RESOLVED_REF }}
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v5
@@ -28,14 +70,13 @@ jobs:
           cache: pnpm
           cache-dependency-path: web-panel/pnpm-lock.yaml
 
-      # Собираем монолитный .exe со встроенной веб-панелью 2.0
-      - name: Build unsigned executable
+      - name: Build single-file executable
         shell: pwsh
         run: ./build.ps1 -Configuration Release
 
       - name: Upload executable
         uses: actions/upload-artifact@v6
         with:
-          name: WandEnhancer-v2.0-dev
+          name: WandEnhancer-${{ env.RESOLVED_REF }}
           path: WandEnhancer/bin/Release/WandEnhancer.exe
           if-no-files-found: error
