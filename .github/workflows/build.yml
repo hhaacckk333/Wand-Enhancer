@@ -3,14 +3,11 @@ name: Build executable
 on:
   workflow_dispatch:
     inputs:
-      configuration:
-        description: 'Выберите конфигурацию сборки'
+      version_tag:
+        description: 'Тег версии для сборки'
         required: true
-        default: 'Release'
-        type: choice
-        options:
-          - Release
-          - Debug
+        default: '2.0.0.0-rc.1'
+        type: string
 
 jobs:
   build:
@@ -19,7 +16,12 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout source code
+        uses: actions/checkout@v5
+        with:
+          repository: 'k1tbyte/Wand-Enhancer'
+          ref: ${{ inputs.version_tag }}
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v5
         with:
@@ -31,13 +33,13 @@ jobs:
           cache: pnpm
           cache-dependency-path: web-panel/pnpm-lock.yaml
 
-      - name: Build executable
+      - name: Build single-file executable
         shell: pwsh
-        run: ./build.ps1 -Configuration ${{ inputs.configuration }}
+        run: ./build.ps1 -Configuration Release
 
-      - name: Upload executable and dependencies
+      - name: Upload executable
         uses: actions/upload-artifact@v6
         with:
-          name: WandEnhancer-${{ inputs.configuration }}
-          path: WandEnhancer/bin/${{ inputs.configuration }}/*
+          name: WandEnhancer-${{ inputs.version_tag }}
+          path: WandEnhancer/bin/Release/WandEnhancer.exe
           if-no-files-found: error
