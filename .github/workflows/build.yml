@@ -2,6 +2,15 @@ name: Build executable
 
 on:
   workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Выберите конфигурацию сборки'
+        required: true
+        default: 'Debug'
+        type: choice
+        options:
+          - Debug
+          - Release
 
 jobs:
   build:
@@ -22,13 +31,13 @@ jobs:
           cache: pnpm
           cache-dependency-path: web-panel/pnpm-lock.yaml
 
-      - name: Build unsigned executable
+      - name: Build executable
         shell: pwsh
-        run: ./build.ps1 -Configuration Release
+        run: ./build.ps1 -Configuration ${{ inputs.configuration }}
 
-      - name: Upload unsigned executable
+      - name: Upload executable
         uses: actions/upload-artifact@v6
         with:
-          name: WandEnhancer-unsigned
-          path: WandEnhancer/bin/Release/WandEnhancer.exe
+          name: WandEnhancer-${{ inputs.configuration }}
+          path: WandEnhancer/bin/${{ inputs.configuration }}/WandEnhancer.exe
           if-no-files-found: error
