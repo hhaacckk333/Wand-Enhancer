@@ -3,60 +3,102 @@ name: Build Wand-Enhancer (Auto-Detect)
 on:
   workflow_dispatch:
     inputs:
-      version_choice:
-        description: 'Какую версию собрать автоматически?'
+      target_repo:
+        description: 'Откуда собирать исходники?'
         required: true
-        default: 'latest-dev'
+        default: 'upstream'
         type: choice
         options:
-          - 'latest-dev (Самая свежая Dev-ветка со всеми обновлениями)'
-          - 'latest-prerelease (Новейший предрелиз / RC: например, rc.1, rc.2...)'
+          - 'upstream (Официальный репозиторий k1tbyte)'
+          - 'fork (Твой форк hhaacckk333)'
+      version_choice:
+        description: 'Какую версию собрать?'
+        required: true
+        default: 'latest-release'
+        type: choice
+        options:
           - 'latest-release (Последний официальный стабильный релиз)'
-          - 'custom (Ввести свой тег вручную)'
+          - 'latest-dev (Самая свежая Dev-ветка / master)'
+          - 'latest-prerelease (Новейший предрелиз / RC)'
+          - 'custom (Ввести свой тег или ветку вручную)'
       custom_tag:
-        description: 'Если выбрали custom, введите тег/ветку (иначе оставьте пустым):'
+        description: 'Если выбрали custom, введите тег или ветку:'
         required: false
         default: ''
         type: string
+      create_release:
+        description: 'Опубликовать готовый GitHub Release со скачиваемым .exe?'
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
-      - name: Auto-detect latest version from official repository
+      - name: Resolve target repository and ref
         shell: pwsh
         run: |
+          $repoChoice = "${{ inputs.target_repo }}"
+          $selectedRepo = if ($repoChoice -like "fork*") { "hhaacckk333/Wand-Enhancer" } else { "k1tbyte/Wand-Enhancer" }
+          
           $choice = "${{ inputs.version_choice }}"
           $custom = "${{ inputs.custom_tag }}".Trim()
+          $headers = @{
+              "Authorization" = "Bearer ${{ secrets.GITHUB_TOKEN }}"
+              "User-Agent"    = "Antigravity-Build-Bot"
+          }
 
           if ($custom -ne "") {
               $targetRef = $custom
-              Write-Host "==> Выбран ручной тег: $targetRef"
-          } elseif ($choice -like "latest-dev*") {
-              # Свежая ветка активной разработки 2.0
-              $targetRef = "feature/rc_v_2.0.0.0"
-              Write-Host "==> Авто-определение: Самая свежая Dev-ветка ($targetRef)"
-          } elseif ($choice -like "latest-prerelease*") {
-              # Автоматически запрашиваем самый свежий предрелиз/RC из GitHub API
-              $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/k1tbyte/Wand-Enhancer/releases"
-              $targetRef = $releases[0].tag_name
-              Write-Host "==> Авто-определение: Найден новейший предрелиз -> $targetRef"
+              Write-Host "==> Выбран ручной ref: $targetRef"
           } elseif ($choice -like "latest-release*") {
-              # Автоматически запрашиваем последний стабильный релиз
-              $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/k1tbyte/Wand-Enhancer/releases/latest"
-              $targetRef = $latest.tag_name
-              Write-Host "==> Авто-определение: Найден стабильный релиз -> $targetRef"
+              try {
+                  $latest = Invoke-RestMethod -Uri "https://api.github.com/repos/$selectedRepo/releases/latest" -Headers $headers
+                  $targetRef = $latest.tag_name
+                  Write-Host "==> Найдена стабильная версия: $targetRef"
+              } catch {
+                  Write-Warning "Стабильный релиз не найден через /releases/latest, сканируем список релизов..."
+                  $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$selectedRepo/releases" -Headers $headers
+                  $targetRef = ($releases | Where-Object { -not $_.prerelease } | Select-Object -First 1).tag_name
+              }
+          } elseif ($choice -like "latest-prerelease*") {
+              $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$selectedRepo/releases" -Headers $headers
+              $pre = $releases | Where-Object { $_.prerelease -eq $true } | Select-Object -First 1
+              if ($pre) {
+                  $targetRef = $pre.tag_name
+                  Write-Host "==> Найден новейший предрелиз / RC: $targetRef"
+              } else {
+                  Write-Warning "Активных предрелизов нет. Откатываемся к последнему доступному релизу."
+                  $targetRef = $releases[0].tag_name
+              }
+          } elseif ($choice -like "latest-dev*") {
+              $repoInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$selectedRepo" -Headers $headers
+              $targetRef = $repoInfo.default_branch
+              if ([string]::IsNullOrWhiteSpace($targetRef)) { $targetRef = "master" }
+              Write-Host "==> Выбрана актуальная dev-ветка: $targetRef"
           }
 
-          echo "RESOLVED_REF=$targetRef" >> $env:GITHUB_ENV
+          if ([string]::IsNullOrWhiteSpace($targetRef)) {
+              throw "Не удалось определить целевую версию для сборки!"
+          }
+
+          # Очистка имени артефакта от недопустимых символов (/, \, :, *, ?, ", <, >, |)
+          $safeRef = $targetRef -replace '[\/:*?"<>|]', '-'
+
+          "RESOLVED_REPO=$selectedRepo" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RESOLVED_REF=$targetRef"     | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SAFE_REF=$safeRef"           | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Write-Host "==> Сборка будет запущена для: Репозиторий [$selectedRepo], Версия [$targetRef], Артефакт [WandEnhancer-$safeRef]"
 
       - name: Checkout resolved version
         uses: actions/checkout@v5
         with:
-          repository: 'k1tbyte/Wand-Enhancer'
+          repository: ${{ env.RESOLVED_REPO }}
           ref: ${{ env.RESOLVED_REF }}
           fetch-depth: 0
 
@@ -74,9 +116,23 @@ jobs:
         shell: pwsh
         run: ./build.ps1 -Configuration Release
 
-      - name: Upload executable
+      - name: Upload executable to Artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: WandEnhancer-${{ env.RESOLVED_REF }}
+          name: WandEnhancer-${{ env.SAFE_REF }}
           path: WandEnhancer/bin/Release/WandEnhancer.exe
           if-no-files-found: error
+
+      - name: Publish to GitHub Releases
+        if: inputs.create_release == true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.SAFE_REF }}-build-${{ github.run_number }}
+          name: Wand-Enhancer ${{ env.RESOLVED_REF }} (Build #${{ github.run_number }})
+          body: |
+            ### Автоматическая сборка Wand-Enhancer
+            - **Источник:** `${{ env.RESOLVED_REPO }}`
+            - **Целевая версия / Ref:** `${{ env.RESOLVED_REF }}`
+            - **Номер сборки:** `#${{ github.run_number }}`
+            - **Готовый файл:** `WandEnhancer.exe` (прикреплен ниже)
+          files: WandEnhancer/bin/Release/WandEnhancer.exe
